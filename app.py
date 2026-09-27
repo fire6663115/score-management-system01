@@ -229,6 +229,7 @@ if "A" in app_mode:
     if st.session_state.uploaded_summary and st.session_state.uploaded_judges:
         st.header(t("Step 2: Execution", "步驟二：執行功能"))
         action = st.radio(t("Select Action", "選擇操作"), [t("🔍 Discrepancy Check", "🔍 差異化成績排查"), t("✨ Auto Integration", "✨ 自動整合匯出總表")], horizontal=True, key="action_A")
+        is_subset_mode = st.checkbox(t("🏆 Finals / Subset Mode (Only verify summary list, ignore extra entries in judge sheets)", "🏆 決賽/篩選模式 (僅核對總表上的名單，自動忽略評審表中的多餘參賽者)"))
         
         if st.button(t("▶️ Execute", "▶️ 開始執行"), type="primary"):
             with st.spinner(t("Processing...", "處理中...")):
@@ -270,11 +271,12 @@ if "A" in app_mode:
                             code = ws_sum.cell(row=r, column=sum_entry_col).value
                             if code: sum_entry_codes.add(str(code).strip())
                             
-                for fname, j_dict in judge_data.items():
-                    unmatched = set(j_dict.keys()) - sum_entry_codes
-                    clean_unmatched = filter_unmatched(unmatched)
-                    if len(clean_unmatched) > 0:
-                        st.warning(t(f"⚠️ Warning: Found entry codes in '{fname}' that don't exist in the Summary sheet, they will be ignored: {clean_unmatched}", f"⚠️ 警告：在 {fname} 中發現以下參賽號碼不在總表中，已被忽略：{clean_unmatched}"))
+                if not is_subset_mode:
+                    for fname, j_dict in judge_data.items():
+                        unmatched = set(j_dict.keys()) - sum_entry_codes
+                        clean_unmatched = filter_unmatched(unmatched)
+                        if len(clean_unmatched) > 0:
+                            st.warning(t(f"⚠️ Warning: Found entry codes in '{fname}' that don't exist in the Summary sheet, they will be ignored: {clean_unmatched}", f"⚠️ 警告：在 {fname} 中發現以下參賽號碼不在總表中，已被忽略：{clean_unmatched}"))
                 
                 checked_count = 0
                 errors = []
@@ -304,25 +306,32 @@ if "A" in app_mode:
                                 j_feature = extract_judge_feature(j_name)
                                 matched_f = next((f for f in judge_data if extract_judge_feature(f) == j_feature), None)
                                 
-                                if matched_f and code_str in judge_data[matched_f]:
-                                    correct_score = judge_data[matched_f][code_str]
-                                    
-                                    if "🔍" in action:
-                                        sum_score = safe_float(ws_sum.cell(row=r, column=c_idx).value)
-                                        if sum_score is not None and correct_score is not None:
-                                            checked_count += 1
-                                            if abs(sum_score - correct_score) > 0.01:
+                                if matched_f:
+                                    if code_str in judge_data[matched_f]:
+                                        correct_score = judge_data[matched_f][code_str]
+                                        
+                                        if "🔍" in action:
+                                            sum_score = safe_float(ws_sum.cell(row=r, column=c_idx).value)
+                                            if sum_score is not None and correct_score is not None:
+                                                checked_count += 1
+                                                if abs(sum_score - correct_score) > 0.01:
+                                                    errors.append({t("Sheet", "分頁"): ws_sum.title, t("Entry Code", "參賽號"): code_str, t("Judge File", "評審"): matched_f, t("Summary Value", "總表數值"): sum_score, t("Correct Value", "正確數值"): correct_score})
+                                                    ws_sum.cell(row=r, column=c_idx).fill = PatternFill(start_color="FFFF0000", end_color="FFFF0000", fill_type="solid")
+                                            else:
+                                                checked_count += 1
                                                 errors.append({t("Sheet", "分頁"): ws_sum.title, t("Entry Code", "參賽號"): code_str, t("Judge File", "評審"): matched_f, t("Summary Value", "總表數值"): sum_score, t("Correct Value", "正確數值"): correct_score})
                                                 ws_sum.cell(row=r, column=c_idx).fill = PatternFill(start_color="FFFF0000", end_color="FFFF0000", fill_type="solid")
-                                        else:
+                                                
+                                        elif "✨" in action:
+                                            if correct_score is not None:
+                                                ws_sum.cell(row=r, column=c_idx).value = correct_score
+                                                filled_count += 1
+                                    else:
+                                        if "🔍" in action:
+                                            sum_score = safe_float(ws_sum.cell(row=r, column=c_idx).value)
                                             checked_count += 1
-                                            errors.append({t("Sheet", "分頁"): ws_sum.title, t("Entry Code", "參賽號"): code_str, t("Judge File", "評審"): matched_f, t("Summary Value", "總表數值"): sum_score, t("Correct Value", "正確數值"): correct_score})
+                                            errors.append({t("Sheet", "分頁"): ws_sum.title, t("Entry Code", "參賽號"): code_str, t("Judge File", "評審"): matched_f, t("Summary Value", "總表數值"): sum_score, t("Correct Value", "正確數值"): t("Missing in Judge Sheet", "評審表中缺失此參賽者分數")})
                                             ws_sum.cell(row=r, column=c_idx).fill = PatternFill(start_color="FFFF0000", end_color="FFFF0000", fill_type="solid")
-                                            
-                                    elif "✨" in action:
-                                        if correct_score is not None:
-                                            ws_sum.cell(row=r, column=c_idx).value = correct_score
-                                            filled_count += 1
                                 
                                 s_val = safe_float(ws_sum.cell(row=r, column=c_idx).value)
                                 if s_val is not None: row_total += s_val
@@ -501,6 +510,7 @@ elif "B" in app_mode:
                             
                     st.header(t("Step 3: Execution", "步驟三：執行功能"))
                     action = st.radio(t("Select Action", "選擇操作"), [t("🔍 Discrepancy Check", "🔍 差異化成績排查"), t("✨ Auto Integration", "✨ 自動整合匯出總表")], horizontal=True, key="action_B")
+                    is_subset_mode = st.checkbox(t("🏆 Finals / Subset Mode (Only verify summary list, ignore extra entries in judge sheets)", "🏆 決賽/篩選模式 (僅核對總表上的名單，自動忽略評審表中的多餘參賽者)"), key="subset_B")
                     
                     if st.button(t("🚀 Run Mapping Task", "🚀 執行綁定任務"), type="primary"):
                         with st.spinner(t("Processing...", "處理中...")):
@@ -551,11 +561,12 @@ elif "B" in app_mode:
                                         code = ws_sum.cell(row=r, column=s_entry_idx).value
                                         if code: sum_entry_codes.add(str(code).strip())
 
-                            for fname, j_dict in judge_data.items():
-                                unmatched = set(j_dict.keys()) - sum_entry_codes
-                                clean_unmatched = filter_unmatched(unmatched)
-                                if len(clean_unmatched) > 0:
-                                    st.warning(t(f"⚠️ Warning: Found entry codes in '{fname}' that don't exist in the Summary sheet, they will be ignored: {clean_unmatched}", f"⚠️ 警告：在 {fname} 中發現以下參賽號碼不在總表中，已被忽略：{clean_unmatched}"))
+                            if not is_subset_mode:
+                                for fname, j_dict in judge_data.items():
+                                    unmatched = set(j_dict.keys()) - sum_entry_codes
+                                    clean_unmatched = filter_unmatched(unmatched)
+                                    if len(clean_unmatched) > 0:
+                                        st.warning(t(f"⚠️ Warning: Found entry codes in '{fname}' that don't exist in the Summary sheet, they will be ignored: {clean_unmatched}", f"⚠️ 警告：在 {fname} 中發現以下參賽號碼不在總表中，已被忽略：{clean_unmatched}"))
                             
                             checked_count = 0
                             errors = []
@@ -596,10 +607,16 @@ elif "B" in app_mode:
                                         sum_score = safe_float(sum_score_raw)
                                         
                                         if "🔍" in action:
-                                            if sum_score_raw is None and correct_score is None: continue
-                                            if str(sum_score_raw).strip() == "" and correct_score is None: continue
+                                            is_missing_in_judge = code_str not in judge_data.get(fname, {})
                                             
-                                            if sum_score is not None and correct_score is not None:
+                                            if sum_score_raw is None and correct_score is None and not is_missing_in_judge: continue
+                                            if str(sum_score_raw).strip() == "" and correct_score is None and not is_missing_in_judge: continue
+                                            
+                                            if is_missing_in_judge:
+                                                checked_count += 1
+                                                errors.append({t("Sheet", "分頁"): ws_sum.title, t("Entry Code", "參賽號"): code_str, t("Judge File", "評審檔案"): fname, t("Summary Value", "總表數值"): sum_score_raw if sum_score_raw is not None else t('Empty', '空白'), t("Correct Value", "正確數值"): t("Missing in Judge Sheet", "評審表中缺失此參賽者分數")})
+                                                ws_sum.cell(row=r, column=c_idx).fill = PatternFill(start_color="FFFF0000", end_color="FFFF0000", fill_type="solid")
+                                            elif sum_score is not None and correct_score is not None:
                                                 checked_count += 1
                                                 if abs(sum_score - correct_score) > 0.01:
                                                     errors.append({t("Sheet", "分頁"): ws_sum.title, t("Entry Code", "參賽號"): code_str, t("Judge File", "評審檔案"): fname, t("Summary Value", "總表數值"): sum_score, t("Correct Value", "正確數值"): correct_score})
